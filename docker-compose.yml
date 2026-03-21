@@ -1,0 +1,13 @@
+version: '3.8'
+
+services:
+  discord-bot:
+    build: .
+    container_name: bot-recomenda-filme
+    restart: unless-stopped
+    environment:
+      - DISCORD_TOKEN=${DISCORD_TOKEN}
+      - GEMINI_API_KEY=${GEMINI_API_KEY}
+      - TMDB_API_KEY=${TMDB_API_KEY}
+    volumes:
+      - ./data:/app/data
