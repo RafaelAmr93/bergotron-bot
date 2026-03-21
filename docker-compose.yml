@@ -1,9 +1,7 @@
-version: '3.8'
-
 services:
   discord-bot:
     build: .
-    container_name: bot-recomenda-filme
+    container_name: bergotron
     restart: unless-stopped
     environment:
       - DISCORD_TOKEN=${DISCORD_TOKEN}
