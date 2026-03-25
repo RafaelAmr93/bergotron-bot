@@ -1,10 +1,10 @@
-import discord
-from discord.ext import commands
 import os
 import asyncio
+import discord
 import edge_tts
+from discord.ext import commands
 from dotenv import load_dotenv
-import re
+
 import db
 import tmdb_service
 import ai_service
@@ -14,7 +14,8 @@ load_dotenv()
 intents = discord.Intents.default()
 intents.message_content = True
 
-bot = commands.Bot(command_prefix='!', intents=intents)
+bot = commands.Bot(command_prefix="!", intents=intents)
+
 
 async def gerar_audio(texto: str, arquivo: str):
     communicate = edge_tts.Communicate(
@@ -23,19 +24,37 @@ async def gerar_audio(texto: str, arquivo: str):
     )
     await communicate.save(arquivo)
 
-def extrair_tmdb_id(link: str):
-    match = re.search(r"/movie/(\d+)", link)
-    if match:
-        return int(match.group(1))
-    return None
+
+def sanitizar_busca_filme(texto: str) -> str:
+    texto = (texto or "").strip()
+
+    if not texto:
+        raise ValueError("Informe o nome do filme.")
+
+    if len(texto) > 120:
+        raise ValueError("Nome do filme muito grande. Tente algo mais curto.")
+
+    # Remove caracteres de controle
+    texto = "".join(ch for ch in texto if ch.isprintable())
+
+    # Normaliza espaços
+    texto = " ".join(texto.split())
+
+    # Defesa leve contra entradas claramente maliciosas
+    padroes_suspeitos = [";", "--", "/*", "*/", "\x00"]
+    if any(p in texto for p in padroes_suspeitos):
+        raise ValueError("Entrada invalida.")
+
+    return texto
+
 
 @bot.event
 async def on_ready():
     db.inicializar_banco()
-    print(f'Bot online e conectado como {bot.user}')
+    print(f"Bot online e conectado como {bot.user}")
 
 
-@bot.command(name='recomende')
+@bot.command(name="recomende")
 @commands.cooldown(1, 30, commands.BucketType.user)
 async def recomende(ctx):
     if not ctx.author.voice:
@@ -60,7 +79,7 @@ async def recomende(ctx):
             await mensagem_status.edit(content="Nenhum filme cadastrado no banco de dados.")
             return
 
-        dados_filme = await tmdb_service.buscar_filme(filme_id)
+        dados_filme = await tmdb_service.buscar_filme(int(filme_id))
         if not dados_filme:
             await mensagem_status.edit(content="Erro ao buscar detalhes do filme na API.")
             return
@@ -72,7 +91,6 @@ async def recomende(ctx):
         texto_recomendacao = await ai_service.gerar_recomendacao(dados_filme)
 
         nome_arquivo = f"recomendacao_{ctx.author.id}.mp3"
-
         await gerar_audio(texto_recomendacao, nome_arquivo)
 
         await mensagem_status.edit(content=f"Falando sobre: {dados_filme['titulo']}!")
@@ -91,6 +109,7 @@ async def recomende(ctx):
     finally:
         if nome_arquivo and os.path.exists(nome_arquivo):
             os.remove(nome_arquivo)
+
 
 @bot.command(name="entrar")
 async def entrar(ctx):
@@ -120,6 +139,7 @@ async def sair(ctx):
     else:
         await ctx.send("Nao estou em canal de voz.")
 
+
 @recomende.error
 async def recomende_error(ctx, error):
     if isinstance(error, commands.CommandOnCooldown):
@@ -129,69 +149,63 @@ async def recomende_error(ctx, error):
             f"Tente de novo em {tempo_restante} segundos."
         )
 
+
 @bot.command(name="adicionar")
 @commands.cooldown(1, 10, commands.BucketType.user)
-async def adicionar(ctx, *, link: str = None):
-    if not link:
+async def adicionar(ctx, *, entrada: str = None):
+    if not entrada:
         await ctx.send(
-            "Mande o comando assim:\n"
-            "!adicionar https://www.themoviedb.org/movie/12345-nome-do-filme"
+            "Use assim:\n"
+            "`!adicionar Nome do Filme`\n"
+            "Ou varios separados por `;`\n\n"
+            "Exemplos:\n"
+            "`!adicionar Pulp Fiction`\n"
+            "`!adicionar Batman Begins 2005; Batman: O Cavaleiro das Trevas 2008; Batman: O Cavaleiro das Trevas Ressurge 2012`"
         )
         return
 
-    tmdb_id = extrair_tmdb_id(link)
+    filmes = separar_entradas_filmes(entrada)
 
-    if not tmdb_id:
-        await ctx.send(
-            "Nao consegui identificar o ID do filme nesse link.\n"
-            "Use um link do TMDB no formato:\n"
-            "https://www.themoviedb.org/movie/12345-nome-do-filme"
-        )
+    if not filmes:
+        await ctx.send("Informe pelo menos um filme.")
         return
 
-    try:
-        dados_filme = await tmdb_service.buscar_filme(tmdb_id)
-    except Exception as e:
-        await ctx.send(f"Erro ao consultar o TMDB: {e}")
+    if len(filmes) > 5:
+        await ctx.send("Voce pode adicionar no maximo 5 filmes por comando.")
         return
 
-    if not dados_filme:
-        await ctx.send("Nao consegui validar esse filme no TMDB. Confira o link.")
-        return
+    resultados = []
+    for filme in filmes:
+        msg = await processar_adicao_filme(filme)
+        resultados.append(msg)
 
-    try:
-        inserido = db.adicionar_filme(tmdb_id)
-    except Exception as e:
-        await ctx.send(f"Erro ao salvar no banco: {e}")
-        return
+    resposta = "\n\n".join(resultados)
 
-    if inserido:
-        await ctx.send(
-            f"Filme adicionado com sucesso: {dados_filme['titulo']} "
-            f"(TMDB ID: {tmdb_id})"
-        )
-    else:
-        await ctx.send(
-            f"Esse filme ja estava cadastrado: {dados_filme['titulo']} "
-            f"(TMDB ID: {tmdb_id})"
-        )
+    if len(resposta) > 1900:
+        resposta = resposta[:1900] + "\n..."
+
+    await ctx.send(resposta)
+    return
+
 
 @bot.command(name="bergotron")
 async def bergotron(ctx):
     mensagem = (
-        "Eu sou o Bergotron, seu oraculo cinematografico de confiança.\n\n"
-        "Minha missao e simples: entrar no canal de voz, puxar um filme do banco e vender a ideia "
-        "como se fosse uma recomendacao feita por um amigo cinéfilo.\n\n"
+        "Eu sou o Bergotron, seu oraculo cinematografico de confianca.\n\n"
         "Comandos:\n"
         "`!bergotron` - mostra esta ajuda.\n"
         "`!entrar` - entro no canal de voz onde voce estiver.\n"
         "`!sair` - saio do canal de voz.\n"
         "`!recomende` - escolho um filme aleatorio e faco a recomendacao em voz alta.\n"
-        "`!adicionar <link do TMDB>` - adiciona um filme ao banco usando o link do TMDB.\n\n"
-        "Exemplo de cadastro:\n"
-        "`!adicionar https://www.themoviedb.org/movie/680-pulp-fiction`"
+        "`!adicionar <nome do filme>` - adiciona um filme ao banco usando o nome.\n"
+        "`!adicionar filme1; filme2; filme3` - adiciona varios filmes de uma vez.\n\n"
+        "Exemplos:\n"
+        "`!adicionar Pulp Fiction`\n"
+        "`!adicionar O Segredo de Brokeback Mountain 2005`\n"
+        "`!adicionar Batman Begins 2005; Batman: O Cavaleiro das Trevas 2008; Batman: O Cavaleiro das Trevas Ressurge 2012`"
     )
     await ctx.send(mensagem)
+
 
 @adicionar.error
 async def adicionar_error(ctx, error):
@@ -203,12 +217,93 @@ async def adicionar_error(ctx, error):
     if isinstance(error, commands.MissingRequiredArgument):
         await ctx.send(
             "Use assim:\n"
-            "!adicionar https://www.themoviedb.org/movie/12345-nome-do-filme"
+            "`!adicionar Nome do Filme`"
         )
         return
 
     await ctx.send(f"Erro no comando adicionar: {error}")
 
+import re
+
+def separar_entradas_filmes(texto: str) -> list[str]:
+    texto = (texto or "").strip()
+
+    if not texto:
+        return []
+
+    # Preferencia por ponto e virgula, que é mais seguro
+    if ";" in texto:
+        partes = texto.split(";")
+    else:
+        # aceita virgula como conveniencia
+        partes = texto.split(",")
+
+    filmes = []
+    for parte in partes:
+        item = " ".join(parte.split()).strip()
+        if item:
+            filmes.append(item)
+
+    return filmes
+
+async def processar_adicao_filme(nome_filme: str) -> str:
+    try:
+        nome_filme = sanitizar_busca_filme(nome_filme)
+    except ValueError as e:
+        return f"❌ `{nome_filme}` -> {e}"
+
+    try:
+        resultado = await tmdb_service.buscar_filme_por_nome(nome_filme)
+    except Exception as e:
+        return f"Erro ao consultar o TMDB para `{nome_filme}`: {e}"
+
+    status = resultado.get("status")
+
+    if status == "erro":
+        return f"Nao consegui consultar o TMDB para `{nome_filme}`."
+
+    if status == "nenhum":
+        return (
+            f"Nao encontrei resultados para `{nome_filme}`. "
+            "Tente usar o titulo original ou informar o ano.\n"
+            "Exemplo:\n"
+            "`!adicionar Brokeback Mountain 2005`\n"
+            "Ou para multiplas adicoes:\n"
+            "`!adicionar Brokeback Mountain 2005; Batman: O Cavaleiro das Trevas 2008`"
+        )
+
+    if status == "multiplo":
+        opcoes = resultado.get("resultados", [])
+        linhas = [
+            f"{item['titulo']} ({item['ano'] or 'ano desconhecido'})"
+            for item in opcoes
+        ]
+
+        return (
+            f"Encontrei varios resultados para `{nome_filme}`:\n\n"
+            + "\n".join(linhas)
+            + "\n\nRefaça o comando com um nome mais especifico, de preferencia com ano.\n"
+            "Exemplos:\n"
+            "`!adicionar Batman Begins 2005`\n"
+            "`!adicionar The Batman 2022; Batman Begins 2005`"
+        )
+
+    if status != "ok":
+        return f"Nao consegui processar a busca para `{nome_filme}`."
+
+    filme = resultado.get("filme")
+    if not filme:
+        return f"Encontrei `{nome_filme}`, mas falhei ao buscar os detalhes."
+
+    try:
+        tmdb_id = int(filme["id"])
+        inserido = db.adicionar_filme(tmdb_id)
+    except Exception as e:
+        return f"Erro ao salvar `{nome_filme}` no banco: {e}"
+
+    if inserido:
+        return f"✅ {filme['titulo']} ({filme['ano']}) adicionado."
+    return f"ℹ️ {filme['titulo']} ({filme['ano']}) ja estava cadastrado."
 
 if __name__ == "__main__":
     token = os.getenv("DISCORD_TOKEN")
