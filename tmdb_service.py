@@ -3,6 +3,7 @@ import re
 import unicodedata
 import aiohttp
 from dotenv import load_dotenv
+import random
 
 load_dotenv()
 
@@ -21,10 +22,6 @@ def _normalizar_titulo(texto: str) -> str:
 def _extrair_titulo_e_ano(texto: str):
     texto = texto.strip()
 
-    # Aceita:
-    # "Brokeback Mountain (2005)"
-    # "Brokeback Mountain 2005"
-    # "Brokeback Mountain"
     match = re.match(r"^(.*?)(?:\s*\((\d{4})\)|\s+(\d{4}))?$", texto)
     if not match:
         return texto, None
@@ -160,3 +157,33 @@ async def buscar_filme_por_nome(nome: str):
         "status": "multiplo",
         "resultados": resultados[:5]
     }
+
+async def buscar_filme_em_alta(janela: str = "day"):
+    if janela not in ("day", "week"):
+        janela = "day"
+
+    url = f"https://api.themoviedb.org/3/trending/movie/{janela}"
+    params = {
+        "api_key": TMDB_API_KEY,
+        "language": "pt-BR",
+    }
+
+    async with aiohttp.ClientSession() as session:
+        async with session.get(url, params=params) as resp:
+            if resp.status != 200:
+                raise RuntimeError(f"TMDB respondeu com status {resp.status}")
+
+            data = await resp.json()
+
+    resultados = data.get("results", [])
+    if not resultados:
+        return None
+
+    top = resultados[:10] if len(resultados) >= 10 else resultados
+    escolhido = random.choice(top)
+
+    filme_id = escolhido.get("id")
+    if not filme_id:
+        return None
+
+    return await buscar_filme(int(filme_id))
