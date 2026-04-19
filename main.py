@@ -92,21 +92,26 @@ async def tocar_recomendacao(ctx, dados_filme: dict, mensagem_inicial: str):
             content=f"Preparando a critica de '{dados_filme['titulo']}'..."
         )
 
+        # Gera o texto com o Ollama/Fallback
         texto_recomendacao = await ai_service.gerar_recomendacao(dados_filme)
         if not texto_recomendacao or not texto_recomendacao.strip():
-            await mensagem_status.edit(content="O Gemini nao gerou texto para esse filme.")
+            await mensagem_status.edit(content="O modelo não gerou texto para esse filme.")
             return
 
+        # Gera o áudio com Edge TTS
         nome_arquivo = f"recomendacao_{ctx.author.id}.mp3"
         await gerar_audio(texto_recomendacao, nome_arquivo)
 
+        # Conecta no canal de voz
         vc = await conectar_no_canal_do_usuario(ctx)
         if vc is None:
             return
 
+        # Toca o áudio
         await mensagem_status.edit(content=f"Falando sobre: {dados_filme['titulo']}!")
         vc.play(discord.FFmpegOpusAudio(nome_arquivo))
 
+        # Espera o áudio terminar de tocar
         while vc.is_playing():
             await asyncio.sleep(1)
 
@@ -118,39 +123,7 @@ async def tocar_recomendacao(ctx, dados_filme: dict, mensagem_inicial: str):
         await mensagem_status.edit(content=f"Ocorreu um erro durante a recomendacao: {e}")
 
     finally:
-        if nome_arquivo and os.path.exists(nome_arquivo):
-            os.remove(nome_arquivo)
-    vc = await conectar_no_canal_do_usuario(ctx)
-    if vc is None:
-        return
-
-    mensagem_status = await ctx.send(mensagem_inicial)
-    nome_arquivo = None
-
-    try:
-        await mensagem_status.edit(
-            content=f"Preparando a critica de '{dados_filme['titulo']}'..."
-        )
-
-        texto_recomendacao = await ai_service.gerar_recomendacao(dados_filme)
-
-        nome_arquivo = f"recomendacao_{ctx.author.id}.mp3"
-        await gerar_audio(texto_recomendacao, nome_arquivo)
-
-        await mensagem_status.edit(content=f"Falando sobre: {dados_filme['titulo']}!")
-        vc.play(discord.FFmpegOpusAudio(nome_arquivo))
-
-        while vc.is_playing():
-            await asyncio.sleep(1)
-
-        await mensagem_status.edit(
-            content=f"Recomendacao finalizada! Vou continuar no canal {vc.channel.name}."
-        )
-
-    except Exception as e:
-        await mensagem_status.edit(content=f"Ocorreu um erro durante a recomendacao: {e}")
-
-    finally:
+        # Limpa o arquivo mp3 gerado, independentemente de dar erro ou não
         if nome_arquivo and os.path.exists(nome_arquivo):
             os.remove(nome_arquivo)
 
