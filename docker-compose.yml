@@ -8,5 +8,3 @@ services:
       - GEMINI_API_KEY=${GEMINI_API_KEY}
       - TMDB_API_KEY=${TMDB_API_KEY}
       - PYTHONUNBUFFERED=1
-    volumes:
-      - ./data:/app/data     
